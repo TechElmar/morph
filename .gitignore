@@ -1,0 +1,13 @@
+# Xcode user state — never commit
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# macOS
+.DS_Store
+
+# Secrets — backend endpoint + keys live locally only, never in the repo
+morph/Secrets.swift
+*.apikey
+.env
