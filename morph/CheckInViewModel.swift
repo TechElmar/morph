@@ -15,15 +15,27 @@ class CheckInViewModel: ObservableObject {
 
     private let legacyStorageKey = "morph_checkins"
     private let aiService = ClaudeAIService()
+    private let accountEmail: String
 
     // Check-ins hold 4 photos each — far too large for UserDefaults (~4MB plist limit),
-    // so they live in a JSON file in the app's Documents directory.
+    // so they live in a JSON file in Documents, one file per account so each
+    // account's history is fully separate.
     private var storageURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let sanitized = accountEmail.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }
+        let filename = sanitized.isEmpty ? "checkins.json" : "checkins_\(String(sanitized)).json"
+        return docs.appendingPathComponent(filename)
+    }
+
+    private var legacyFileURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("checkins.json")
     }
 
-    init() { loadCheckIns() }
+    init(accountEmail: String = "") {
+        self.accountEmail = accountEmail
+        loadCheckIns()
+    }
 
     // MARK: - Draft Management
 
@@ -64,7 +76,7 @@ class CheckInViewModel: ObservableObject {
 
     // MARK: - Submit for Analysis
 
-    func submitCheckIn(userProfile: UserProfile) async {
+    func submitCheckIn(userProfile: UserProfile, isPro: Bool = false) async {
         guard currentDraft.isComplete else {
             errorMessage = "Please upload all 4 photos before submitting."
             return
@@ -84,6 +96,8 @@ class CheckInViewModel: ObservableObject {
             checkIn.analysis = analysis
             checkIns.insert(checkIn, at: 0)
             saveCheckIns()
+            DeviceCheckInGate.recordAnalysis()
+            NotificationManager.reschedule(isPro: isPro)
             analysisJustCompleted = true
             Haptics.success()
         } catch {
@@ -145,20 +159,16 @@ class CheckInViewModel: ObservableObject {
     }
 
     // MARK: - Check-In Gating (Free: 1/week · Pro: 1/day)
+    // Delegated to the device-level Keychain gate so creating new accounts
+    // (or reinstalling) can't reset the limit.
 
     func canCheckIn(isPro: Bool) -> Bool {
-        isPro ? !hasCheckInToday : !hasCheckInThisWeek
+        DeviceCheckInGate.canCheckIn(isPro: isPro)
     }
 
     /// When the next check-in unlocks. Nil if one is available now.
     func nextCheckInDate(isPro: Bool) -> Date? {
-        guard !canCheckIn(isPro: isPro) else { return nil }
-        let cal = Calendar.current
-        if isPro {
-            return cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: Date()) ?? Date())
-        }
-        guard let weekInterval = cal.dateInterval(of: .weekOfYear, for: Date()) else { return nil }
-        return weekInterval.end
+        DeviceCheckInGate.nextCheckInDate(isPro: isPro)
     }
 
     /// Weight change since the previous check-in (kg), nil if fewer than 2.
@@ -195,7 +205,17 @@ class CheckInViewModel: ObservableObject {
             checkIns = loaded
             return
         }
-        // One-time migration from the old UserDefaults storage
+        // One-time migration: adopt the old shared checkins.json for this account
+        if !accountEmail.isEmpty,
+           FileManager.default.fileExists(atPath: legacyFileURL.path),
+           let data = try? Data(contentsOf: legacyFileURL),
+           let loaded = try? JSONDecoder().decode([PhysiqueCheckIn].self, from: data) {
+            checkIns = loaded
+            saveCheckIns()
+            try? FileManager.default.removeItem(at: legacyFileURL)
+            return
+        }
+        // One-time migration from the even older UserDefaults storage
         if let data = UserDefaults.standard.data(forKey: legacyStorageKey),
            let loaded = try? JSONDecoder().decode([PhysiqueCheckIn].self, from: data) {
             checkIns = loaded

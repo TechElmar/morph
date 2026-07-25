@@ -1,5 +1,6 @@
 import SwiftUI
 import UserNotifications
+import PhotosUI
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -10,10 +11,12 @@ struct ProfileView: View {
     @EnvironmentObject var subscriptionVM: SubscriptionViewModel
     @AppStorage(WeightFormat.storageKey) private var unitRaw = "kg"
     @AppStorage("morph_reminder_enabled") private var reminderEnabled = false
+    @AppStorage(MorphTheme.storageKey) private var appearance = "dark"
     @State private var showEditProfile = false
     @State private var showSignOutAlert = false
     @State private var showClearDataAlert = false
     @State private var showPaywall = false
+    @State private var avatarItem: PhotosPickerItem?
 
     private var unit: WeightUnit { WeightUnit(rawValue: unitRaw) ?? .kg }
 
@@ -25,14 +28,21 @@ struct ProfileView: View {
                     VStack(spacing: MorphSpacing.xl) {
                         // Profile header
                         VStack(spacing: MorphSpacing.md) {
-                            ZStack {
-                                Circle()
-                                    .fill(MorphColors.accentDim)
-                                    .frame(width: 80, height: 80)
-                                Text(initials)
-                                    .font(MorphFonts.display(28))
-                                    .foregroundColor(MorphColors.accent)
+                            PhotosPicker(selection: $avatarItem, matching: .images) {
+                                ZStack(alignment: .bottomTrailing) {
+                                    avatarView
+                                    ZStack {
+                                        Circle()
+                                            .fill(MorphColors.accent)
+                                            .frame(width: 26, height: 26)
+                                        Image(systemName: "camera.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(MorphColors.background)
+                                    }
+                                    .offset(x: 2, y: 2)
+                                }
                             }
+                            .buttonStyle(.plain)
                             VStack(spacing: 4) {
                                 Text(authVM.currentUser.name.isEmpty ? "Athlete" : authVM.currentUser.name)
                                     .font(MorphFonts.heading(20))
@@ -108,13 +118,33 @@ struct ProfileView: View {
                             .padding(MorphSpacing.md)
                             .morphCard()
 
+                            // Appearance toggle
+                            HStack(spacing: MorphSpacing.md) {
+                                Image(systemName: "circle.lefthalf.filled")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(MorphColors.textSecondary)
+                                    .frame(width: 20)
+                                Text("Appearance")
+                                    .font(MorphFonts.body(15))
+                                    .foregroundColor(MorphColors.textPrimary)
+                                Spacer()
+                                Picker("Appearance", selection: $appearance) {
+                                    Text("Dark").tag("dark")
+                                    Text("Light").tag("light")
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 120)
+                            }
+                            .padding(MorphSpacing.md)
+                            .morphCard()
+
                             // Weekly reminder toggle
                             HStack(spacing: MorphSpacing.md) {
                                 Image(systemName: "bell.badge")
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(MorphColors.textSecondary)
                                     .frame(width: 20)
-                                Text("Weekly Check-In Reminder")
+                                Text("Daily Reminders")
                                     .font(MorphFonts.body(15))
                                     .foregroundColor(MorphColors.textPrimary)
                                 Spacer()
@@ -169,7 +199,7 @@ struct ProfileView: View {
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(MorphColors.background, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(MorphTheme.colorScheme, for: .navigationBar)
         }
         .sheet(isPresented: $showEditProfile) { EditProfileView() }
         .sheet(isPresented: $showPaywall) { PaywallView() }
@@ -187,32 +217,50 @@ struct ProfileView: View {
         }
         .onChange(of: reminderEnabled) { _, enabled in
             if enabled {
-                scheduleWeeklyReminder()
+                NotificationManager.enable(isPro: subscriptionVM.isPro) { granted in
+                    if !granted { reminderEnabled = false }
+                }
             } else {
-                UNUserNotificationCenter.current()
-                    .removePendingNotificationRequests(withIdentifiers: ["morph_weekly_reminder"])
+                NotificationManager.disable()
+            }
+        }
+        .onChange(of: avatarItem) { _, item in
+            Task {
+                if let data = try? await item?.loadTransferable(type: Data.self) {
+                    var updated = authVM.currentUser
+                    updated.avatarData = CheckInViewModel.downscale(data, maxDimension: 400)
+                    authVM.updateProfile(updated)
+                }
             }
         }
     }
 
-    private func scheduleWeeklyReminder() {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else {
-                DispatchQueue.main.async { reminderEnabled = false }
-                return
-            }
-            let content = UNMutableNotificationContent()
-            content.title = "Check-In Day 📸"
-            content.body = "Time for your weekly physique photos. Let's see the progress."
-            content.sound = .default
+    @ViewBuilder
+    private var avatarView: some View {
+        #if canImport(UIKit)
+        if let data = authVM.currentUser.avatarData, let img = UIImage(data: data) {
+            Image(uiImage: img)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 80, height: 80)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(MorphColors.border, lineWidth: 1))
+        } else {
+            initialsCircle
+        }
+        #else
+        initialsCircle
+        #endif
+    }
 
-            var date = DateComponents()
-            date.weekday = 1   // Sunday
-            date.hour = 10
-            let trigger = UNCalendarNotificationTrigger(dateMatching: date, repeats: true)
-            let request = UNNotificationRequest(identifier: "morph_weekly_reminder", content: content, trigger: trigger)
-            center.add(request)
+    private var initialsCircle: some View {
+        ZStack {
+            Circle()
+                .fill(MorphColors.accentDim)
+                .frame(width: 80, height: 80)
+            Text(initials)
+                .font(MorphFonts.display(28))
+                .foregroundColor(MorphColors.accent)
         }
     }
 
@@ -309,6 +357,10 @@ struct EditProfileView: View {
                     VStack(spacing: MorphSpacing.lg) {
                         VStack(spacing: MorphSpacing.md) {
                             VStack(alignment: .leading, spacing: MorphSpacing.sm) {
+                                FieldLabel("Name")
+                                MorphTextField(placeholder: "Your name", text: $draft.name, icon: "person")
+                            }
+                            VStack(alignment: .leading, spacing: MorphSpacing.sm) {
                                 FieldLabel("Height: \(WeightFormat.height(draft.heightCm, unit: unit))")
                                 Slider(value: $draft.heightCm, in: 140...220, step: 1)
                                     .tint(MorphColors.accent)
@@ -354,7 +406,7 @@ struct EditProfileView: View {
                 }
             }
             .toolbarBackground(MorphColors.background, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(MorphTheme.colorScheme, for: .navigationBar)
         }
         .presentationBackground(MorphColors.background)
         .onAppear { draft = authVM.currentUser }

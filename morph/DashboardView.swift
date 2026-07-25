@@ -2,8 +2,12 @@ import SwiftUI
 
 // MARK: - Main Tab View
 struct MainTabView: View {
-    @StateObject private var checkInVM = CheckInViewModel()
+    @StateObject private var checkInVM: CheckInViewModel
     @EnvironmentObject var authVM: AuthViewModel
+
+    init(accountEmail: String = "") {
+        _checkInVM = StateObject(wrappedValue: CheckInViewModel(accountEmail: accountEmail))
+    }
 
     var body: some View {
         TabView(selection: $checkInVM.selectedTab) {

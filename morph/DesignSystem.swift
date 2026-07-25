@@ -6,35 +6,48 @@ import UIKit
 // MARK: - Morph Design System
 // Dark athletic aesthetic: near-black base, electric cyan accent, warm off-white text
 
-struct MorphColors {
-    // Backgrounds
-    static let background    = Color(hex: "#0A0A0F")   // Near-black with slight blue tint
-    static let surface       = Color(hex: "#111118")   // Card backgrounds
-    static let surfaceHigh   = Color(hex: "#1A1A24")   // Elevated surfaces
-    static let border        = Color(hex: "#2A2A3A")   // Subtle borders
+// MARK: - Theme
+enum MorphTheme {
+    static let storageKey = "morph_appearance"
 
-    // Accent — electric cyan, used sparingly
-    static let accent        = Color(hex: "#00E5CC")
-    static let accentDim     = Color(hex: "#00E5CC").opacity(0.15)
-    static let accentGlow    = Color(hex: "#00E5CC").opacity(0.3)
+    static var isLight: Bool {
+        UserDefaults.standard.string(forKey: storageKey) == "light"
+    }
+
+    static var colorScheme: ColorScheme { isLight ? .light : .dark }
+}
+
+struct MorphColors {
+    private static var light: Bool { MorphTheme.isLight }
+
+    // Backgrounds
+    static var background: Color   { light ? Color(hex: "#F4F4F6") : Color(hex: "#0A0A0F") }
+    static var surface: Color      { light ? Color(hex: "#FFFFFF") : Color(hex: "#111118") }
+    static var surfaceHigh: Color  { light ? Color(hex: "#FAFAFC") : Color(hex: "#1A1A24") }
+    static var border: Color       { light ? Color(hex: "#E3E3EA") : Color(hex: "#2A2A3A") }
+
+    // Accent — electric cyan (darker teal in light mode for contrast)
+    static var accent: Color       { light ? Color(hex: "#0AA390") : Color(hex: "#00E5CC") }
+    static var accentDim: Color    { accent.opacity(light ? 0.12 : 0.15) }
+    static var accentGlow: Color   { accent.opacity(light ? 0.22 : 0.3) }
 
     // Text
-    static let textPrimary   = Color(hex: "#F0EDE8")   // Warm off-white
-    static let textSecondary = Color(hex: "#8A8A9A")   // Muted
-    static let textTertiary  = Color(hex: "#4A4A5A")   // Very muted
+    static var textPrimary: Color   { light ? Color(hex: "#16161D") : Color(hex: "#F0EDE8") }
+    static var textSecondary: Color { light ? Color(hex: "#5C5C6A") : Color(hex: "#8A8A9A") }
+    static var textTertiary: Color  { light ? Color(hex: "#A0A0AC") : Color(hex: "#4A4A5A") }
 
     // Semantic
-    static let success       = Color(hex: "#22C55E")
-    static let warning       = Color(hex: "#F59E0B")
-    static let destructive   = Color(hex: "#EF4444")
+    static var success: Color      { light ? Color(hex: "#16A34A") : Color(hex: "#22C55E") }
+    static var warning: Color      { light ? Color(hex: "#D97706") : Color(hex: "#F59E0B") }
+    static var destructive: Color  { light ? Color(hex: "#DC2626") : Color(hex: "#EF4444") }
 
     // Score gradient (1→10)
     static func scoreColor(_ score: Double) -> Color {
         switch score {
-        case 0..<4:  return Color(hex: "#EF4444")
-        case 4..<6:  return Color(hex: "#F59E0B")
-        case 6..<8:  return Color(hex: "#84CC16")
-        default:     return Color(hex: "#22C55E")
+        case 0..<4:  return light ? Color(hex: "#DC2626") : Color(hex: "#EF4444")
+        case 4..<6:  return light ? Color(hex: "#D97706") : Color(hex: "#F59E0B")
+        case 6..<8:  return light ? Color(hex: "#65A30D") : Color(hex: "#84CC16")
+        default:     return light ? Color(hex: "#16A34A") : Color(hex: "#22C55E")
         }
     }
 }

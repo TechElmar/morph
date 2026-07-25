@@ -6,6 +6,7 @@ struct UserProfile: Codable, Identifiable {
     var id: String = UUID().uuidString
     var email: String = ""
     var name: String = ""
+    var avatarData: Data? = nil
     var age: Int = 25
     var gender: Gender = .preferNotToSay
     var heightCm: Double = 175

@@ -117,7 +117,10 @@ struct CheckInView: View {
                                     checkInVM.currentDraft.weightKg = currentWeight
                                     checkInVM.currentDraft.notes = notes
                                     Task {
-                                        await checkInVM.submitCheckIn(userProfile: authVM.currentUser)
+                                        await checkInVM.submitCheckIn(
+                                            userProfile: authVM.currentUser,
+                                            isPro: subscriptionVM.isPro
+                                        )
                                     }
                                 }
                             }
@@ -482,7 +485,7 @@ struct PhotoTipsSheet: View {
             .navigationTitle("Photo Tips")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(MorphColors.background, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(MorphTheme.colorScheme, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

@@ -110,7 +110,7 @@ struct SignUpView: View {
     enum Field { case name, email, password, confirm }
 
     var isValid: Bool {
-        !name.isEmpty && email.contains("@") &&
+        !name.isEmpty && AuthViewModel.isValidEmail(email) &&
         password.count >= 6 && password == confirmPassword
     }
 
@@ -139,11 +139,27 @@ struct SignUpView: View {
                             MorphTextField(placeholder: "Email", text: $email, icon: "envelope", keyboardType: .emailAddress)
                                 .focused($focusedField, equals: .email)
 
+                            if !email.isEmpty && !AuthViewModel.isValidEmail(email) {
+                                Text("Please enter a valid email address")
+                                    .font(MorphFonts.caption(11))
+                                    .foregroundColor(MorphColors.destructive)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 4)
+                            }
+
                             MorphTextField(placeholder: "Password (min 6 chars)", text: $password, icon: "lock", isSecure: !showPassword)
                                 .focused($focusedField, equals: .password)
 
                             MorphTextField(placeholder: "Confirm Password", text: $confirmPassword, icon: "lock.fill", isSecure: !showPassword)
                                 .focused($focusedField, equals: .confirm)
+
+                            if !confirmPassword.isEmpty && password != confirmPassword {
+                                Text("Passwords don't match")
+                                    .font(MorphFonts.caption(11))
+                                    .foregroundColor(MorphColors.destructive)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 4)
+                            }
 
                             // Show password toggle
                             Toggle(isOn: $showPassword) {
@@ -185,6 +201,7 @@ struct SignUpView: View {
             }
         }
         .presentationBackground(MorphColors.background)
+        .onAppear { authVM.errorMessage = nil }
     }
 }
 
@@ -247,5 +264,6 @@ struct SignInView: View {
             }
         }
         .presentationBackground(MorphColors.background)
+        .onAppear { authVM.errorMessage = nil }
     }
 }

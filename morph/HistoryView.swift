@@ -53,7 +53,7 @@ struct HistoryView: View {
             .navigationTitle("Progress")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(MorphColors.background, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(MorphTheme.colorScheme, for: .navigationBar)
         }
     }
 }
@@ -607,7 +607,7 @@ struct CheckInDetailView: View {
         .navigationTitle("Check-In Detail")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(MorphColors.background, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarColorScheme(MorphTheme.colorScheme, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if let shareImage = shareImage {
