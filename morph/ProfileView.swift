@@ -15,6 +15,7 @@ struct ProfileView: View {
     @State private var showEditProfile = false
     @State private var showSignOutAlert = false
     @State private var showClearDataAlert = false
+    @State private var showDeleteAccountAlert = false
     @State private var showPaywall = false
     @State private var avatarItem: PhotosPickerItem?
 
@@ -184,6 +185,9 @@ struct ProfileView: View {
                             SettingsRow(icon: "arrow.backward.square", title: "Sign Out", destructive: true) {
                                 showSignOutAlert = true
                             }
+                            SettingsRow(icon: "person.crop.circle.badge.xmark", title: "Delete Account", destructive: true) {
+                                showDeleteAccountAlert = true
+                            }
                         }
                         .padding(.horizontal, MorphSpacing.xl)
 
@@ -214,6 +218,15 @@ struct ProfileView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("All check-ins, photos, and analyses will be permanently deleted.")
+        }
+        .alert("Delete Account?", isPresented: $showDeleteAccountAlert) {
+            Button("Delete Forever", role: .destructive) {
+                checkInVM.clearAll()
+                authVM.deleteAccount()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your account, profile, and all check-in data will be permanently deleted. This cannot be undone.")
         }
         .onChange(of: reminderEnabled) { _, enabled in
             if enabled {

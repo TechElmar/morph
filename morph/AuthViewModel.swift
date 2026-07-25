@@ -123,6 +123,15 @@ class AuthViewModel: ObservableObject {
         currentUser = UserProfile()
     }
 
+    /// Permanently removes the account and ends the session.
+    /// (App Store guideline 5.1.1 requires in-app account deletion.)
+    func deleteAccount() {
+        let key = Self.normalize(currentUser.email)
+        accounts.removeValue(forKey: key)
+        saveAccounts()
+        signOut()
+    }
+
     func completeOnboarding(profile: UserProfile) {
         var updated = profile
         updated.hasCompletedOnboarding = true
