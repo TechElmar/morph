@@ -73,7 +73,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.morph.pro.yearly",
+          "productID" : "com.morph.pro.annual",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Pro Yearly",
           "subscriptionGroupID" : "21529600",

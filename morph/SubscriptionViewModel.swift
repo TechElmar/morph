@@ -11,7 +11,7 @@ final class SubscriptionViewModel: ObservableObject {
     @Published var purchaseJustSucceeded: Bool = false
 
     static let monthlyProductID = "com.morph.pro.monthly"
-    static let yearlyProductID  = "com.morph.pro.yearly"
+    static let yearlyProductID  = "com.morph.pro.annual"
     static let allProductIDs: Set<String> = [monthlyProductID, yearlyProductID]
 
     private var transactionListener: Task<Void, Never>?
