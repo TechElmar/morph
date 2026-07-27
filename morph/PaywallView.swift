@@ -119,7 +119,7 @@ struct PaywallView: View {
 
                             HStack(spacing: MorphSpacing.lg) {
                                 Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
-                                Link("Privacy Policy", destination: URL(string: "https://morphapp.example.com/privacy")!)
+                                Link("Privacy Policy", destination: URL(string: "https://techelmar.github.io/morph/privacy.html")!)
                             }
                             .font(MorphFonts.caption(11))
                             .foregroundColor(MorphColors.textTertiary)
