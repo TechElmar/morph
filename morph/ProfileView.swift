@@ -230,7 +230,10 @@ struct ProfileView: View {
         }
         .onChange(of: reminderEnabled) { _, enabled in
             if enabled {
-                NotificationManager.enable(isPro: subscriptionVM.isPro) { granted in
+                NotificationManager.enable(
+                    isPro: subscriptionVM.isPro,
+                    nextUnlock: checkInVM.nextCheckInDate(isPro: subscriptionVM.isPro)
+                ) { granted in
                     if !granted { reminderEnabled = false }
                 }
             } else {

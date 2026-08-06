@@ -8,8 +8,11 @@
 // The app will compile without AI functionality if the proxy is unreachable.
 
 enum Secrets {
+    /// Your base Supabase project URL.
+    static let supabaseURL = "https://YOUR-PROJECT.supabase.co"
+
     /// Your Supabase Edge Function URL that proxies Anthropic API calls.
-    static let aiProxyURL = "https://YOUR-PROJECT.supabase.co/functions/v1/analyze-physique"
+    static let aiProxyURL = "\(supabaseURL)/functions/v1/analyze-physique"
 
     /// Your Supabase publishable key.
     static let supabasePublishableKey = "sb_publishable_YOUR_KEY_HERE"

@@ -32,10 +32,10 @@ enum NotificationManager {
         UserDefaults.standard.bool(forKey: enabledKey)
     }
 
-    static func enable(isPro: Bool, onResult: @escaping (Bool) -> Void) {
+    static func enable(isPro: Bool, nextUnlock: Date?, onResult: @escaping (Bool) -> Void) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             DispatchQueue.main.async {
-                if granted { reschedule(isPro: isPro) }
+                if granted { reschedule(isPro: isPro, nextUnlock: nextUnlock) }
                 onResult(granted)
             }
         }
@@ -45,13 +45,15 @@ enum NotificationManager {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
     }
 
-    static func reschedule(isPro: Bool) {
+    /// `nextUnlock` is when the user's next check-in becomes available (nil = available now),
+    /// derived from their synced check-in history by the caller.
+    static func reschedule(isPro: Bool, nextUnlock: Date?) {
         guard isEnabled else { return }
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
 
         let cal = Calendar.current
-        let unlockDate = DeviceCheckInGate.nextCheckInDate(isPro: isPro)  // nil = available now
+        let unlockDate = nextUnlock
         var messages = motivations.shuffled()
 
         for offset in 0..<7 {

@@ -8,33 +8,35 @@ import UIKit
 class CheckInViewModel: ObservableObject {
     @Published var checkIns: [PhysiqueCheckIn] = []
     @Published var isAnalyzing: Bool = false
+    @Published var isLoading: Bool = false          // loading history from the cloud
     @Published var errorMessage: String?
     @Published var currentDraft: PhysiqueCheckIn = PhysiqueCheckIn(weightKg: 75)
     @Published var analysisJustCompleted: Bool = false
     @Published var selectedTab: Int = 0
 
-    private let legacyStorageKey = "morph_checkins"
     private let aiService = ClaudeAIService()
-    private let accountEmail: String
-
-    // Check-ins hold 4 photos each — far too large for UserDefaults (~4MB plist limit),
-    // so they live in a JSON file in Documents, one file per account so each
-    // account's history is fully separate.
-    private var storageURL: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let sanitized = accountEmail.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }
-        let filename = sanitized.isEmpty ? "checkins.json" : "checkins_\(String(sanitized)).json"
-        return docs.appendingPathComponent(filename)
-    }
-
-    private var legacyFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("checkins.json")
-    }
+    private let supa = SupabaseClient.shared
+    private let slots: [(PhotoDirection, String)] = [
+        (.front, "front"), (.back, "back"), (.left, "left"), (.right, "right")
+    ]
 
     init(accountEmail: String = "") {
-        self.accountEmail = accountEmail
-        loadCheckIns()
+        Task { await loadCheckIns() }
+    }
+
+    // MARK: - Local photo cache (avoid re-downloading on every launch)
+
+    private var cacheDir: URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("photo_cache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    private func cacheURL(_ checkInID: String, _ slot: String) -> URL {
+        cacheDir.appendingPathComponent("\(checkInID)_\(slot).jpg")
+    }
+    private func storagePath(_ uid: String, _ checkInID: String, _ slot: String) -> String {
+        "\(uid)/\(checkInID)/\(slot).jpg"
     }
 
     // MARK: - Draft Management
@@ -53,8 +55,6 @@ class CheckInViewModel: ObservableObject {
         }
     }
 
-    // Downscale to max 1200px and re-encode as JPEG. Keeps local storage small and
-    // guarantees the base64 payload stays under the Claude API's 5MB image limit.
     static func downscale(_ data: Data, maxDimension: CGFloat = 1200) -> Data {
         #if canImport(UIKit)
         guard let image = UIImage(data: data) else { return data }
@@ -65,26 +65,72 @@ class CheckInViewModel: ObservableObject {
         let scale = maxDimension / largest
         let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
         let renderer = UIGraphicsImageRenderer(size: newSize)
-        let resized = renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: newSize))
-        }
+        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
         return resized.jpegData(compressionQuality: 0.8) ?? data
         #else
         return data
         #endif
     }
 
-    // MARK: - Submit for Analysis
+    // MARK: - Load from cloud
+
+    func loadCheckIns() async {
+        guard let session = SupabaseClient.loadSession() else { return }
+        isLoading = true
+        do {
+            let (rows, _) = try await supa.select(
+                path: "/check_ins?user_id=eq.\(session.userID)&select=*&order=date.desc",
+                session: session)
+            checkIns = rows.compactMap { Self.checkIn(from: $0) }   // metadata first
+            if NotificationManager.isEnabled {
+                NotificationManager.reschedule(isPro: false, nextUnlock: nextCheckInDate(isPro: false))
+            }
+            await hydratePhotos(session: session)                   // then photos
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    /// Fill each check-in's photo Data from local cache or Storage.
+    private func hydratePhotos(session: SupabaseClient.Session) async {
+        for index in checkIns.indices {
+            let id = checkIns[index].id
+            for (dir, slot) in slots {
+                let cache = cacheURL(id, slot)
+                var data = try? Data(contentsOf: cache)
+                if data == nil {
+                    data = try? await supa.downloadPhoto(
+                        path: storagePath(session.userID, id, slot), session: session)
+                    if let d = data { try? d.write(to: cache, options: .atomic) }
+                }
+                guard let d = data, index < checkIns.count else { continue }
+                switch dir {
+                case .front: checkIns[index].photoFront = d
+                case .back:  checkIns[index].photoBack  = d
+                case .left:  checkIns[index].photoLeft  = d
+                case .right: checkIns[index].photoRight = d
+                }
+            }
+        }
+    }
+
+    // MARK: - Submit
 
     func submitCheckIn(userProfile: UserProfile, isPro: Bool = false) async {
         guard currentDraft.isComplete else {
             errorMessage = "Please upload all 4 photos before submitting."
             return
         }
+        guard let session = SupabaseClient.loadSession() else {
+            errorMessage = "You're signed out. Please sign in again."
+            return
+        }
         isAnalyzing = true
         errorMessage = nil
 
         var checkIn = currentDraft
+        checkIn.id = UUID().uuidString.lowercased()
         checkIn.date = Date()
 
         do {
@@ -94,10 +140,34 @@ class CheckInViewModel: ObservableObject {
                 previousCheckIn: checkIns.first
             )
             checkIn.analysis = analysis
+
+            // Upload the 4 photos, cache locally, and record storage paths.
+            var paths: [String: String] = [:]
+            for (dir, slot) in slots {
+                guard let data = checkIn.photo(for: dir) else { continue }
+                let path = storagePath(session.userID, checkIn.id, slot)
+                _ = try await supa.uploadPhoto(data, path: path, session: session)
+                try? data.write(to: cacheURL(checkIn.id, slot), options: .atomic)
+                paths[slot] = path
+            }
+
+            // Insert the row.
+            let row: [String: Any] = [
+                "id": checkIn.id,
+                "user_id": session.userID,
+                "date": Self.iso8601.string(from: checkIn.date),
+                "weight_kg": checkIn.weightKg,
+                "notes": checkIn.notes,
+                "analysis": Self.analysisDict(analysis),
+                "photo_front": paths["front"] as Any,
+                "photo_back": paths["back"] as Any,
+                "photo_left": paths["left"] as Any,
+                "photo_right": paths["right"] as Any
+            ]
+            _ = try await supa.upsert(table: "check_ins", row: row, session: session)
+
             checkIns.insert(checkIn, at: 0)
-            saveCheckIns()
-            DeviceCheckInGate.recordAnalysis()
-            NotificationManager.reschedule(isPro: isPro)
+            NotificationManager.reschedule(isPro: isPro, nextUnlock: nextCheckInDate(isPro: isPro))
             analysisJustCompleted = true
             Haptics.success()
         } catch {
@@ -111,25 +181,34 @@ class CheckInViewModel: ObservableObject {
 
     func deleteCheckIn(_ checkIn: PhysiqueCheckIn) {
         checkIns.removeAll { $0.id == checkIn.id }
-        saveCheckIns()
+        guard let session = SupabaseClient.loadSession() else { return }
+        let id = checkIn.id
+        let paths = slots.map { storagePath(session.userID, id, $0.1) }
+        Task {
+            _ = try? await supa.delete(table: "check_ins", filter: "id=eq.\(id)", session: session)
+            await supa.deletePhotos(paths: paths, session: session)
+        }
+        for (_, slot) in slots { try? FileManager.default.removeItem(at: cacheURL(id, slot)) }
     }
 
     func clearAll() {
+        let ids = checkIns.map(\.id)
         checkIns = []
-        try? FileManager.default.removeItem(at: storageURL)
+        guard let session = SupabaseClient.loadSession() else { return }
+        let allPaths = ids.flatMap { id in slots.map { storagePath(session.userID, id, $0.1) } }
+        Task {
+            _ = try? await supa.delete(table: "check_ins", filter: "user_id=eq.\(session.userID)", session: session)
+            await supa.deletePhotos(paths: allPaths, session: session)
+        }
+        for id in ids { for (_, slot) in slots { try? FileManager.default.removeItem(at: cacheURL(id, slot)) } }
     }
 
     // MARK: - Derived Stats
 
     var latestAnalysis: PhysiqueAnalysis? { checkIns.first?.analysis }
     var hasAnyCheckIn: Bool { !checkIns.isEmpty }
+    var previousAnalysis: PhysiqueAnalysis? { checkIns.count > 1 ? checkIns[1].analysis : nil }
 
-    /// Analysis from the check-in before the latest, for delta display.
-    var previousAnalysis: PhysiqueAnalysis? {
-        checkIns.count > 1 ? checkIns[1].analysis : nil
-    }
-
-    /// Consecutive calendar weeks (ending this week or last) with at least one check-in.
     var weeklyStreak: Int {
         let cal = Calendar.current
         let weeks = Set(checkIns.compactMap { cal.dateInterval(of: .weekOfYear, for: $0.date)?.start })
@@ -159,31 +238,31 @@ class CheckInViewModel: ObservableObject {
     }
 
     // MARK: - Check-In Gating (Free: 1/week · Pro: 1/day)
-    // Delegated to the device-level Keychain gate so creating new accounts
-    // (or reinstalling) can't reset the limit.
+    // Derived from server-synced history, so it's correct across devices.
 
     func canCheckIn(isPro: Bool) -> Bool {
-        DeviceCheckInGate.canCheckIn(isPro: isPro)
+        isPro ? !hasCheckInToday : !hasCheckInThisWeek
     }
 
-    /// When the next check-in unlocks. Nil if one is available now.
     func nextCheckInDate(isPro: Bool) -> Date? {
-        DeviceCheckInGate.nextCheckInDate(isPro: isPro)
+        guard !canCheckIn(isPro: isPro), let last = checkIns.first?.date else { return nil }
+        let cal = Calendar.current
+        if isPro {
+            return cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: last) ?? Date())
+        }
+        return cal.dateInterval(of: .weekOfYear, for: last)?.end
     }
 
-    /// Weight change since the previous check-in (kg), nil if fewer than 2.
     var weightDeltaKg: Double? {
         guard checkIns.count > 1 else { return nil }
         return checkIns[0].weightKg - checkIns[1].weightKg
     }
 
-    /// Total weight change since the first check-in (kg).
     var totalWeightDeltaKg: Double? {
         guard checkIns.count > 1, let first = checkIns.last else { return nil }
         return checkIns[0].weightKg - first.weightKg
     }
 
-    /// 0...1 progress from starting weight toward goal weight. Nil when not meaningful.
     func goalProgress(goalKg: Double) -> Double? {
         guard let start = checkIns.last?.weightKg,
               let current = checkIns.first?.weightKg,
@@ -192,35 +271,43 @@ class CheckInViewModel: ObservableObject {
         return min(max(progress, 0), 1)
     }
 
-    // MARK: - Persistence
+    // MARK: - Mapping (check_ins row <-> PhysiqueCheckIn)
 
-    private func saveCheckIns() {
-        guard let data = try? JSONEncoder().encode(checkIns) else { return }
-        try? data.write(to: storageURL, options: .atomic)
+    private static let iso8601: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let iso8601NoFraction: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static func parseDate(_ s: String) -> Date {
+        iso8601.date(from: s) ?? iso8601NoFraction.date(from: s) ?? Date()
     }
 
-    private func loadCheckIns() {
-        if let data = try? Data(contentsOf: storageURL),
-           let loaded = try? JSONDecoder().decode([PhysiqueCheckIn].self, from: data) {
-            checkIns = loaded
-            return
+    private static func checkIn(from row: [String: Any]) -> PhysiqueCheckIn? {
+        guard let id = row["id"] as? String else { return nil }
+        var c = PhysiqueCheckIn(weightKg: (row["weight_kg"] as? Double) ?? 0)
+        c.id = id
+        c.date = parseDate(row["date"] as? String ?? "")
+        c.notes = row["notes"] as? String ?? ""
+        if let analysisDict = row["analysis"] as? [String: Any] {
+            c.analysis = analysis(from: analysisDict)
         }
-        // One-time migration: adopt the old shared checkins.json for this account
-        if !accountEmail.isEmpty,
-           FileManager.default.fileExists(atPath: legacyFileURL.path),
-           let data = try? Data(contentsOf: legacyFileURL),
-           let loaded = try? JSONDecoder().decode([PhysiqueCheckIn].self, from: data) {
-            checkIns = loaded
-            saveCheckIns()
-            try? FileManager.default.removeItem(at: legacyFileURL)
-            return
-        }
-        // One-time migration from the even older UserDefaults storage
-        if let data = UserDefaults.standard.data(forKey: legacyStorageKey),
-           let loaded = try? JSONDecoder().decode([PhysiqueCheckIn].self, from: data) {
-            checkIns = loaded
-            saveCheckIns()
-            UserDefaults.standard.removeObject(forKey: legacyStorageKey)
-        }
+        return c
+    }
+
+    private static func analysisDict(_ analysis: PhysiqueAnalysis) -> [String: Any] {
+        guard let data = try? JSONEncoder().encode(analysis),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return dict
+    }
+
+    private static func analysis(from dict: [String: Any]) -> PhysiqueAnalysis? {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
+        return try? JSONDecoder().decode(PhysiqueAnalysis.self, from: data)
     }
 }
