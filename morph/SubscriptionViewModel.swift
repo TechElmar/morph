@@ -4,8 +4,16 @@ import Combine
 
 @MainActor
 final class SubscriptionViewModel: ObservableObject {
-    @Published var isPro: Bool = false
+    /// True StoreKit entitlement (a real/sandbox subscription is active).
+    @Published private var storeKitPro: Bool = false
+    /// Server-side comp: this account was granted Pro for free (profiles.is_pro).
+    @Published private var isComped: Bool = false
+    /// Pro access = a real subscription OR a comped account.
+    var isPro: Bool { storeKitPro || isComped }
+
     @Published var isLoading: Bool = false
+    @Published var isLoadingProducts: Bool = false
+    @Published var productLoadFailed: Bool = false
     @Published var products: [Product] = []
     @Published var errorMessage: String?
     @Published var purchaseJustSucceeded: Bool = false
@@ -40,12 +48,19 @@ final class SubscriptionViewModel: ObservableObject {
     // MARK: - Products
 
     func loadProducts() async {
+        isLoadingProducts = true
         do {
             let loaded = try await Product.products(for: Self.allProductIDs)
             products = loaded.sorted { $0.price < $1.price }
+            // An empty result is a failure too: wrong product IDs, products not
+            // yet approved, or no StoreKit config when running from the sim.
+            productLoadFailed = loaded.isEmpty
         } catch {
+            products = []
+            productLoadFailed = true
             print("StoreKit product load failed: \(error)")
         }
+        isLoadingProducts = false
     }
 
     var monthlyProduct: Product? { products.first { $0.id == Self.monthlyProductID } }
@@ -74,7 +89,7 @@ final class SubscriptionViewModel: ObservableObject {
                 case .verified(let transaction):
                     await transaction.finish()
                     await refreshEntitlements()
-                    if isPro {
+                    if storeKitPro {
                         purchaseJustSucceeded = true
                         Haptics.success()
                     }
@@ -103,7 +118,7 @@ final class SubscriptionViewModel: ObservableObject {
             if !isPro {
                 errorMessage = "No active subscription found."
             }
-        } catch {
+        } catch let error {
             errorMessage = "Restore failed: \(error.localizedDescription)"
         }
         isLoading = false
@@ -120,6 +135,24 @@ final class SubscriptionViewModel: ObservableObject {
                 pro = true
             }
         }
-        isPro = pro
+        storeKitPro = pro
+    }
+
+    // MARK: - Comp override (server-side free Pro)
+
+    /// Reads profiles.is_pro for the signed-in account. Lets us grant Pro to
+    /// specific accounts (App Review, friends) without an actual purchase.
+    func refreshComped() async {
+        guard let session = SupabaseClient.loadSession() else {
+            isComped = false
+            return
+        }
+        do {
+            let (rows, _) = try await SupabaseClient.shared.select(
+                path: "/profiles?id=eq.\(session.userID)&select=is_pro", session: session)
+            isComped = (rows.first?["is_pro"] as? Bool) ?? false
+        } catch {
+            // Leave the current value on transient failure.
+        }
     }
 }

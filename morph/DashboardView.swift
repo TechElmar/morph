@@ -4,6 +4,8 @@ import SwiftUI
 struct MainTabView: View {
     @StateObject private var checkInVM: CheckInViewModel
     @EnvironmentObject var authVM: AuthViewModel
+    @EnvironmentObject var subscriptionVM: SubscriptionViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init(accountEmail: String = "") {
         _checkInVM = StateObject(wrappedValue: CheckInViewModel(accountEmail: accountEmail))
@@ -37,6 +39,17 @@ struct MainTabView: View {
         }
         .tint(MorphColors.accent)
         .environmentObject(checkInVM)
+        // Re-runs per account (MainTabView is .id'd on email), so a comped
+        // account gets Pro as soon as it signs in — on any device.
+        .task { await subscriptionVM.refreshComped() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task {
+                    await subscriptionVM.refreshComped()
+                    await subscriptionVM.refreshEntitlements()
+                }
+            }
+        }
     }
 }
 

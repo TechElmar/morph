@@ -60,14 +60,25 @@ struct PaywallView: View {
                         // Product options
                         if subscriptionVM.products.isEmpty {
                             VStack(spacing: MorphSpacing.md) {
-                                Text("Subscription options are loading…")
-                                    .font(MorphFonts.body(13))
-                                    .foregroundColor(MorphColors.textSecondary)
-                                Button("Retry") {
-                                    Task { await subscriptionVM.loadProducts() }
+                                if subscriptionVM.isLoadingProducts {
+                                    ProgressView()
+                                        .tint(MorphColors.accent)
+                                    Text("Loading subscription options…")
+                                        .font(MorphFonts.body(13))
+                                        .foregroundColor(MorphColors.textSecondary)
+                                } else {
+                                    Text(subscriptionVM.productLoadFailed
+                                         ? "Couldn't reach the App Store. Check your connection and try again."
+                                         : "Subscription options are loading…")
+                                        .font(MorphFonts.body(13))
+                                        .foregroundColor(MorphColors.textSecondary)
+                                        .multilineTextAlignment(.center)
+                                    Button("Retry") {
+                                        Task { await subscriptionVM.loadProducts() }
+                                    }
+                                    .font(MorphFonts.caption(13))
+                                    .foregroundColor(MorphColors.accent)
                                 }
-                                .font(MorphFonts.caption(13))
-                                .foregroundColor(MorphColors.accent)
                             }
                             .padding(MorphSpacing.lg)
                         } else {
@@ -98,7 +109,10 @@ struct PaywallView: View {
                             style: .primary,
                             isDisabled: subscriptionVM.isLoading || subscriptionVM.products.isEmpty
                         ) {
-                            if let product = subscriptionVM.products.first(where: { $0.id == selectedProductID }) {
+                            // Fall back to the first available product so the CTA
+                            // is never a no-op if the selected one didn't load.
+                            if let product = subscriptionVM.products.first(where: { $0.id == selectedProductID })
+                                ?? subscriptionVM.products.first {
                                 Task { await subscriptionVM.purchase(product) }
                             }
                         }
@@ -143,6 +157,11 @@ struct PaywallView: View {
             }
         }
         .presentationBackground(MorphColors.background)
+        // If the launch-time load failed (e.g. no network yet), retry when the
+        // paywall is actually opened rather than showing a dead "loading" state.
+        .task {
+            if subscriptionVM.products.isEmpty { await subscriptionVM.loadProducts() }
+        }
         .onChange(of: subscriptionVM.purchaseJustSucceeded) { _, succeeded in
             if succeeded {
                 subscriptionVM.purchaseJustSucceeded = false
