@@ -129,11 +129,16 @@ final class SubscriptionViewModel: ObservableObject {
     func refreshEntitlements() async {
         var pro = false
         for await result in Transaction.currentEntitlements {
-            if case .verified(let transaction) = result,
-               Self.allProductIDs.contains(transaction.productID),
-               transaction.revocationDate == nil {
-                pro = true
-            }
+            guard case .verified(let transaction) = result,
+                  Self.allProductIDs.contains(transaction.productID),
+                  transaction.revocationDate == nil else { continue }
+
+            // currentEntitlements is documented to exclude expired subscriptions
+            // but does not reliably do so in the sandbox, which otherwise latches
+            // Pro on permanently after the first purchase. Check the date here so
+            // a lapsed subscription actually loses access.
+            if let expiry = transaction.expirationDate, expiry <= Date() { continue }
+            pro = true
         }
         storeKitPro = pro
     }

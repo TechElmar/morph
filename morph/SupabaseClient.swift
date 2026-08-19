@@ -111,6 +111,51 @@ struct SupabaseClient {
         _ = try? await URLSession.shared.data(for: req)
     }
 
+    // MARK: - Password reset (email OTP)
+
+    /// Send a 6-digit recovery code to the address, if an account exists.
+    /// GoTrue returns 200 either way so we never reveal whether an email is registered.
+    func requestPasswordReset(email: String) async throws {
+        _ = try await postAuth(path: "/auth/v1/recover", body: ["email": email])
+    }
+
+    /// Exchange the emailed recovery code for a session so the password can be changed.
+    func verifyRecoveryCode(email: String, code: String) async throws -> Session {
+        let body: [String: Any] = ["type": "recovery", "email": email, "token": code]
+        let data = try await postAuth(path: "/auth/v1/verify", body: body)
+        return try makeSession(from: data, fallbackEmail: email)
+    }
+
+    /// Set a new password for the signed-in (or just-recovered) user.
+    func updatePassword(_ newPassword: String, session: Session) async throws {
+        var req = URLRequest(url: URL(string: "\(base)/auth/v1/user")!)
+        req.httpMethod = "PUT"
+        req.timeoutInterval = 30
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["password": newPassword])
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw SupabaseError.message("No response from server.")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            throw SupabaseError.http(http.statusCode, friendlyAuthMessage(raw))
+        }
+    }
+
+    // MARK: - RPC
+
+    /// Call a Postgres function through PostgREST.
+    @discardableResult
+    func rpc(_ name: String, args: [String: Any] = [:], session: Session) async throws -> Session {
+        let body = try JSONSerialization.data(withJSONObject: args)
+        let (_, s) = try await rest("POST", path: "/rpc/\(name)", session: session, body: body)
+        return s
+    }
+
     /// Exchange a refresh token for a fresh session. Used when access token expires.
     func refresh(session: Session) async throws -> Session {
         let body: [String: Any] = ["refresh_token": session.refreshToken]

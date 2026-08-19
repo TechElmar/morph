@@ -220,10 +220,11 @@ struct WeightFormat {
 
     static func height(_ cm: Double, unit: WeightUnit) -> String {
         if unit == .kg { return String(format: "%.0f cm", cm) }
-        let totalInches = cm / 2.54
-        let feet = Int(totalInches / 12)
-        let inches = Int(totalInches.rounded()) % 12
-        return "\(feet)'\(inches)\""
+        // Round once and derive both parts from the same value. Rounding the
+        // inches separately from the feet makes them disagree at every foot
+        // boundary (182cm rendered as 5'0" instead of 6'0").
+        let totalInches = Int((cm / 2.54).rounded())
+        return "\(totalInches / 12)'\(totalInches % 12)\""
     }
 }
 

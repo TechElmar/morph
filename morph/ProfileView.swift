@@ -196,6 +196,7 @@ struct ProfileView: View {
                             .foregroundColor(MorphColors.textTertiary)
                             .padding(.top, MorphSpacing.lg)
 
+
                         Spacer(minLength: 40)
                     }
                 }
@@ -221,8 +222,8 @@ struct ProfileView: View {
         }
         .alert("Delete Account?", isPresented: $showDeleteAccountAlert) {
             Button("Delete Forever", role: .destructive) {
-                checkInVM.clearAll()
-                authVM.deleteAccount()
+                // Deletion clears the rows itself; clearAll() would only race it.
+                Task { _ = await authVM.deleteAccount() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

@@ -109,18 +109,84 @@ class AuthViewModel: ObservableObject {
 
     /// Removes the user's data (profile + check-ins + photos are cascaded server-side
     /// via RLS/foreign keys) and ends the session. Satisfies App Store guideline 5.1.1.
-    func deleteAccount() {
-        guard let s = session else { return }
-        Task {
-            _ = try? await supa.delete(table: "check_ins", filter: "user_id=eq.\(s.userID)", session: s)
-            _ = try? await supa.delete(table: "profiles", filter: "id=eq.\(s.userID)", session: s)
-            await supa.signOut(session: s)
+    /// Permanently deletes the account: stored photos, database rows, and the
+    /// auth user itself. Deleting the auth user needs privileges the client
+    /// doesn't have, so it goes through the `delete_own_account` SECURITY
+    /// DEFINER function, which only ever deletes the caller's own row.
+    /// Only signs out locally once the server confirms, so a failure can't
+    /// leave the user believing their data is gone when it isn't.
+    func deleteAccount() async -> Bool {
+        guard let s = session else { return false }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            // Storage isn't covered by the SQL cascade, so clear the photos first.
+            let (rows, s1) = try await supa.select(
+                path: "/check_ins?user_id=eq.\(s.userID)&select=photo_front,photo_back,photo_left,photo_right",
+                session: s)
+            let paths = rows.flatMap { row in
+                ["photo_front", "photo_back", "photo_left", "photo_right"]
+                    .compactMap { row[$0] as? String }
+            }
+            await supa.deletePhotos(paths: paths, session: s1)
+
+            // Removes check_ins, profiles, and the auth user in one transaction.
+            _ = try await supa.rpc("delete_own_account", session: s1)
+
+            await supa.signOut(session: s1)
+            clearLocalState()
+            return true
+        } catch {
+            errorMessage = "Couldn't delete your account: \(error.localizedDescription)"
+            return false
         }
+    }
+
+    private func clearLocalState() {
         SupabaseClient.clearSession()
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("photo_cache", isDirectory: true)
+        try? FileManager.default.removeItem(at: cache)
         session = nil
         isLoggedIn = false
         hasCompletedOnboarding = false
         currentUser = UserProfile()
+    }
+
+    // MARK: - Password reset
+
+    func requestPasswordReset(email: String) async -> Bool {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            try await supa.requestPasswordReset(email: email)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Verifies the emailed code, sets the new password, and signs the user in.
+    func resetPassword(email: String, code: String, newPassword: String) async -> Bool {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let recovered = try await supa.verifyRecoveryCode(email: email, code: code)
+            try await supa.updatePassword(newPassword, session: recovered)
+            SupabaseClient.saveSession(recovered)
+            session = recovered
+            isLoggedIn = true
+            await loadProfile()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func completeOnboarding(profile: UserProfile) {

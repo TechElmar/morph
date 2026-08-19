@@ -212,6 +212,7 @@ struct SignInView: View {
 
     @State private var email = ""
     @State private var password = ""
+    @State private var showForgotPassword = false
 
     var body: some View {
         NavigationStack {
@@ -252,6 +253,13 @@ struct SignInView: View {
                     }
                     .padding(.horizontal, MorphSpacing.xl)
 
+                    Button("Forgot password?") {
+                        authVM.errorMessage = nil
+                        showForgotPassword = true
+                    }
+                    .font(MorphFonts.body(14))
+                    .foregroundColor(MorphColors.accent)
+
                     Spacer()
                 }
             }
@@ -265,5 +273,139 @@ struct SignInView: View {
         }
         .presentationBackground(MorphColors.background)
         .onAppear { authVM.errorMessage = nil }
+        .sheet(isPresented: $showForgotPassword) {
+            ForgotPasswordView(prefilledEmail: email)
+        }
+    }
+}
+
+// MARK: - Forgot Password
+/// Two steps in one sheet: request a code, then set a new password with it.
+/// Uses an emailed code rather than a magic link so the whole flow stays in
+/// the app and needs no deep-link handling.
+struct ForgotPasswordView: View {
+    @EnvironmentObject var authVM: AuthViewModel
+    @Environment(\.dismiss) var dismiss
+
+    let prefilledEmail: String
+
+    @State private var email = ""
+    @State private var code = ""
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var codeSent = false
+
+    private var canSend: Bool {
+        AuthViewModel.isValidEmail(email) && !authVM.isLoading
+    }
+    private var canReset: Bool {
+        code.count >= 6 && newPassword.count >= 6 &&
+        newPassword == confirmPassword && !authVM.isLoading
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                MorphColors.background.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: MorphSpacing.lg) {
+                        VStack(spacing: MorphSpacing.sm) {
+                            Text(codeSent ? "Enter Your Code" : "Reset Password")
+                                .font(MorphFonts.heading(28))
+                                .foregroundColor(MorphColors.textPrimary)
+                            Text(codeSent
+                                 ? "We sent a 6-digit code to \(email). Enter it below along with your new password."
+                                 : "Enter your email and we'll send you a code to reset your password.")
+                                .font(MorphFonts.body(15))
+                                .foregroundColor(MorphColors.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, MorphSpacing.xl)
+                        .padding(.horizontal, MorphSpacing.xl)
+
+                        VStack(spacing: MorphSpacing.md) {
+                            MorphTextField(placeholder: "Email", text: $email,
+                                           icon: "envelope", keyboardType: .emailAddress)
+                                .disabled(codeSent)
+                                .opacity(codeSent ? 0.6 : 1)
+
+                            if codeSent {
+                                MorphTextField(placeholder: "6-digit code", text: $code,
+                                               icon: "number", keyboardType: .numberPad)
+                                MorphTextField(placeholder: "New password (min 6 chars)",
+                                               text: $newPassword, icon: "lock", isSecure: true)
+                                MorphTextField(placeholder: "Confirm new password",
+                                               text: $confirmPassword, icon: "lock.fill", isSecure: true)
+
+                                if !confirmPassword.isEmpty && newPassword != confirmPassword {
+                                    Text("Passwords don't match")
+                                        .font(MorphFonts.caption(11))
+                                        .foregroundColor(MorphColors.destructive)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 4)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, MorphSpacing.xl)
+
+                        if let error = authVM.errorMessage {
+                            ErrorBanner(message: error)
+                                .padding(.horizontal, MorphSpacing.xl)
+                        }
+
+                        if codeSent {
+                            MorphButton(
+                                title: authVM.isLoading ? "Resetting…" : "Reset Password",
+                                style: .primary,
+                                isDisabled: !canReset
+                            ) {
+                                Task {
+                                    if await authVM.resetPassword(email: email, code: code,
+                                                                  newPassword: newPassword) {
+                                        dismiss()
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, MorphSpacing.xl)
+
+                            Button("Send a new code") {
+                                code = ""
+                                Task { _ = await authVM.requestPasswordReset(email: email) }
+                            }
+                            .font(MorphFonts.body(14))
+                            .foregroundColor(MorphColors.accent)
+                            .disabled(authVM.isLoading)
+                        } else {
+                            MorphButton(
+                                title: authVM.isLoading ? "Sending…" : "Send Code",
+                                style: .primary,
+                                isDisabled: !canSend
+                            ) {
+                                Task {
+                                    if await authVM.requestPasswordReset(email: email) {
+                                        codeSent = true
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, MorphSpacing.xl)
+                        }
+                    }
+                    .padding(.bottom, 40)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundColor(MorphColors.textSecondary)
+                }
+            }
+        }
+        .presentationBackground(MorphColors.background)
+        .onAppear {
+            authVM.errorMessage = nil
+            if email.isEmpty { email = prefilledEmail }
+        }
     }
 }
