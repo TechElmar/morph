@@ -16,6 +16,7 @@ struct ProfileView: View {
     @State private var showSignOutAlert = false
     @State private var showClearDataAlert = false
     @State private var showDeleteAccountAlert = false
+    @State private var showSources = false
     @State private var showPaywall = false
     @State private var avatarItem: PhotosPickerItem?
 
@@ -178,6 +179,14 @@ struct ProfileView: View {
                         .padding(.horizontal, MorphSpacing.xl)
 
                         VStack(spacing: MorphSpacing.sm) {
+                            SettingsSectionHeader("About")
+                            SettingsRow(icon: "book.closed", title: "Sources & Methodology") {
+                                showSources = true
+                            }
+                        }
+                        .padding(.horizontal, MorphSpacing.xl)
+
+                        VStack(spacing: MorphSpacing.sm) {
                             SettingsSectionHeader("Account")
                             SettingsRow(icon: "trash", title: "Clear All Check-In Data", destructive: true) {
                                 showClearDataAlert = true
@@ -208,6 +217,7 @@ struct ProfileView: View {
         }
         .sheet(isPresented: $showEditProfile) { EditProfileView() }
         .sheet(isPresented: $showPaywall) { PaywallView() }
+        .sheet(isPresented: $showSources) { SourcesView() }
         .alert("Sign Out", isPresented: $showSignOutAlert) {
             Button("Sign Out", role: .destructive) { authVM.signOut() }
             Button("Cancel", role: .cancel) {}

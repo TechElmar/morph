@@ -537,6 +537,7 @@ struct CheckInDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showDeleteAlert = false
     @State private var shareImage: Image?
+    @State private var showSources = false
 
     var body: some View {
         ZStack {
@@ -597,6 +598,30 @@ struct CheckInDetailView: View {
 
                         RecommendationsCard(analysis: analysis)
                             .padding(.horizontal, MorphSpacing.xl)
+
+                        // Guideline 1.4.1: citations sit with the figures they explain.
+                        Button {
+                            showSources = true
+                        } label: {
+                            HStack(spacing: MorphSpacing.sm) {
+                                Image(systemName: "book.closed")
+                                Text("Sources & Methodology")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .font(MorphFonts.body(14))
+                            .foregroundColor(MorphColors.accent)
+                            .padding(MorphSpacing.md)
+                            .morphCard()
+                        }
+                        .padding(.horizontal, MorphSpacing.xl)
+
+                        Text("Scores and body fat percentages are AI estimates, not clinical measurements. Morph provides general fitness and nutrition information, not medical advice.")
+                            .font(MorphFonts.caption(11))
+                            .foregroundColor(MorphColors.textTertiary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, MorphSpacing.xl)
                     }
 
                     Spacer(minLength: 40)
@@ -630,6 +655,7 @@ struct CheckInDetailView: View {
             }
         }
         .onAppear { renderShareCard() }
+        .sheet(isPresented: $showSources) { SourcesView() }
         .alert("Delete Check-In?", isPresented: $showDeleteAlert) {
             Button("Delete", role: .destructive) {
                 checkInVM.deleteCheckIn(checkIn)
